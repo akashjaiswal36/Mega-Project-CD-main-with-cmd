@@ -1,2 +1,92 @@
 # Mega-Project-CD-main-with-cmd
 Mega-Project-CD-main-with-cmd
+
+
+Issues while deploying on EKS:
+
+1 . deployment.apps/bankapp created
+error: resource mapping not found for name: "letsencrypt-prod" namespace: "" from "Manifest/ci.yaml": no matches for kind "ClusterIssuer" in version "cert-manager.io/v1"
+service/bankapp-service created
+ensure CRDs are installed first
+Error: Process completed with exit code 1.
+
+
+Solution: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+verify : kubectl get pods -n cert-manager
+
+
+
+-------------------------------------------------------------------------------------------
+# Kubeconfig
+aws eks --region ap-south-1 update-kubeconfig --name EKS-cluster-terraform
+---------------------------------------------------------------------------------
+
+
+---------------------------------------------------------------------------------------------------------
+eksctl utils associate-iam-oidc-provider --region ap-south-1 --cluster EKS-cluster-terraform --approve
+-----------------------------------------------------------------------------------------------
+eksctl create iamserviceaccount \
+  --region ap-south-1 \
+  --name ebs-csi-controller-sa \
+  --namespace kube-system \
+  --cluster EKS-cluster-terraform \
+  --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+  --approve \
+  --override-existing-serviceaccounts
+-----------------------------------------------------------------------------------------------
+kubectl apply -k "github.com/kubernetes-sigs/aws-ebs-csi-driver/deploy/kubernetes/overlays/stable/ecr/?ref=release-1.11"
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.12.0/cert-manager.yaml
+---------------------------------------------------------------------------------------
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 
+
+helm repo update
+
+---
+alertmanager:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    service:
+      type: LoadBalancer
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ebs-sc
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+grafana:
+  enabled: true
+  service:
+    type: LoadBalancer
+  adminUser: admin
+  adminPassword: admin123
+nodeExporter:
+  service:
+    type: LoadBalancer
+kubeStateMetrics:
+  enabled: true
+  service:
+    type: LoadBalancer
+additionalScrapeConfigs:
+  - job_name: node-exporter
+    static_configs:
+      - targets:
+          - node-exporter:9100
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets:
+          - kube-state-metrics:8080
+
+
+
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack -f values.yaml -n monitoring --create-namespace
+
+kubectl patch svc monitoring-kube-prometheus-prometheus -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+kubectl patch svc monitoring-kube-state-metrics -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+kubectl patch svc monitoring-prometheus-node-exporter -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
